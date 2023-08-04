@@ -1,0 +1,1693 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Quantitative Plant Ecology in R</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Rob Smith" />
+    <meta name="date" content="2023-08-06" />
+    <script src="libs/header-attrs/header-attrs.js"></script>
+    <link href="libs/remark-css/default.css" rel="stylesheet" />
+    <link rel="stylesheet" href="widths.css" type="text/css" />
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: inverse, middle, center, the-title-slide, title-slide
+
+.title[
+# Quantitative Plant Ecology in R
+]
+.subtitle[
+## ESA 2023, Portland
+]
+.author[
+### Rob Smith
+]
+.date[
+### 2023-08-06
+]
+
+---
+
+
+class: inverse middle center big-subsection
+
+
+
+# Good afternoon!
+
+---
+class: inverse middle center big-subsection
+
+# Overview
+
+---
+
+# Overview
+
+.pull-left[
+### You want to:
+
+- Count species or turnover
+
+- Visualize species patterns among SUs 
+
+- Group SUs by species differences 
+
+- Test species differences among SUs 
+
+- Evaluate env-species 
+
+- Evaluate trait-env-species 
+
+- Evaluate phylogeny-trait-env-species 
+
+- Evaluate spatial-phylogeny-trait-env-species 
+]
+
+--
+
+.pull-right[
+### You can use:
+
+- Diversity measures 
+
+- Ordination 
+
+- Clustering 
+
+- Hypothesis testing
+
+- Hypothesis testing, overlays
+
+- CWM, fourth corner 
+
+- Phylogenetic community methods 
+
+- Advanced community methods
+]
+
+---
+
+# Software installation
+
+1\. Download and install R from: https://cran.r-project.org/  
+
+2\. Optional: download and install Rstudio from: https://posit.co/download/rstudio-desktop/
+
+3\. Install packages (only once!)  
+
+
+```r
+pkg &lt;- c('vegan', 'labdsv', 'ade4', 'ecodist', 'ape', 'picante')
+install.packages(pkg)
+```
+
+4\. Load packages  
+
+
+```r
+sapply(pkg, require, character.only = TRUE)
+```
+    
+
+
+5\. Load some utility functions  
+
+
+```r
+source("https://github.com/phytomosaic/esa2022/raw/main/R/utils_color.R")
+```
+
+---
+
+# Basic R syntax
+
+
+```r
+### assignment
+x &lt;- 10                                # objects: a scalar
+m &lt;- matrix(c(1:8,NA), nrow=3, ncol=3) # objects: a 3x3 matrix
+f &lt;- function(a, b) { a + b }          # functions
+e &lt;- new.env()                         # environments
+
+### object structure
+str(x)                                 # describe structure
+head(x)                                # peek at top few rows
+
+### indexing values in an object
+m[1,1]                                 # matrix row 1, column 1
+lst$the_name                           # list item by name (data.frame column)
+
+### replacing pesky values
+m[is.na(m)] &lt;- 777                     # assign value to any missing values
+```
+
+---
+
+# The Matrix
+
+![matrices](./fig/mx_c.png)
+
+---
+
+# The data
+
+### Mafragh, Algeria vegetation data
+
+We will use one core dataset throughout this tutorial. The `veg` dataset gives information about spatial coordinates, species, environment, traits, and phylogeny for plants on the Mafragh coastal plain in North Africa. 
+
+Specifically, `veg` is a list containing five items:
+
+- `xy`  97 observations of 2 spatial coordinates
+- `spe` 97 observations of 56 plant species
+- `env` 97 observations of 11 soil environmental variables
+- `tra` 12 traits for 56 plant species
+- `phy` phylogeny for 56 plant species
+
+---
+
+# Load data
+
+
+```r
+load('./data/veg.rda')  # load the object (contains multiple objects)
+xy  &lt;- veg$xy           # spatial
+spe &lt;- veg$spe          # species
+env &lt;- veg$env          # environment
+tra &lt;- veg$tra          # traits
+phy &lt;- veg$phy          # phylogeny
+rm(veg)                 # cleanup
+ls()                    # list objects now in this local environment
+```
+
+```
+## [1] "colvec"      "env"         "get_palette" "phy"         "pkg"        
+## [6] "snk"         "spe"         "tra"         "xy"
+```
+
+--
+&lt;br&gt;&lt;/br&gt;
+#### How would you examine what's inside one of these objects?
+
+---
+class: inverse middle center big-subsection
+
+# Transformations
+
+---
+
+# Transformations
+
+
+```r
+### Species: express abundances as 0/1 presence/absence
+# (spe &gt; 0) * 1
+
+### Species: express abundances on log10 scale
+spe &lt;- data.frame(log10(spe + 1))
+
+### Environment: express variables in [0,1] range
+env &lt;- data.frame(vegan::decostand(env, 'range'))
+
+### Traits: express traits in [0,1] range 
+tra &lt;- data.frame(vegan::decostand(tra, 'range'))
+```
+
+--
+
+#### Why do we transform community data?
+
+---
+class: inverse middle center big-subsection
+
+# Outliers
+
+---
+
+# Outliers
+
+#### Define multivariate outlier function
+
+
+```r
+`outliers` &lt;- function (x, mult=2, method='bray') {
+    d       &lt;- as.matrix(vegan::vegdist(x, method=method, binary=F, diag=T, upper=T))
+    diag(d) &lt;- as.numeric(1)     # avoid zero-multiplication
+    m       &lt;- apply(d, 2, mean) # site means
+    z       &lt;- scale(m)          # z-scores
+    data.frame(mean_dist = m, z = z, is_outlier = abs(z) &gt;= mult)
+}
+```
+
+--
+
+
+```r
+o &lt;- outliers(spe, mult=2)
+head(o, 3)
+```
+
+```
+##   mean_dist          z is_outlier
+## 1 0.8487643  0.3107496      FALSE
+## 2 0.8283680 -0.2028542      FALSE
+## 3 0.8214233 -0.3777314      FALSE
+```
+
+```r
+which(o$is_outlier)
+```
+
+```
+## [1] 32 45 95 97
+```
+
+---
+
+# Test validity of species matrix
+
+Species matrix must have no missings, no empty SUs, no empty species. 
+
+
+```r
+!anyNA(spe)                    # expect TRUE, no missing values
+
+all(rowSums(spe, na.rm=T) &gt; 0) # expect TRUE, no empty sites
+
+all(colSums(spe, na.rm=T) &gt; 0) # expect TRUE, no empty species
+```
+  
+---
+
+# Visualize data
+
+.pull-left.w50[
+
+```r
+### spatial
+*plot(xy, pch=19, col='grey')
+
+### species
+vegan::tabasco(spe, col=get_palette())
+
+### environment
+vegan::tabasco(env, col=get_palette())
+
+### traits
+vegan::tabasco(tra, col=get_palette())
+
+### phylogeny
+plot(phy, cex=0.6, no.margin=TRUE)
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/plot-data-02-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Visualize data
+
+.pull-left.w50[
+
+```r
+### spatial
+plot(xy, pch=19, col='grey')
+
+### species
+*vegan::tabasco(spe, col=get_palette())
+
+### environment
+vegan::tabasco(env, col=get_palette())
+
+### traits
+vegan::tabasco(tra, col=get_palette())
+
+### phylogeny
+plot(phy, cex=0.6, no.margin=TRUE)
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/plot-data-04-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Visualize data
+
+.pull-left.w50[
+
+```r
+### spatial
+plot(xy, pch=19, col='grey')
+
+### species
+vegan::tabasco(spe, col=get_palette())
+
+### environment
+*vegan::tabasco(env, col=get_palette())
+
+### traits
+vegan::tabasco(tra, col=get_palette())
+
+### phylogeny
+plot(phy, cex=0.6, no.margin=TRUE)
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/plot-data-06-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Visualize data
+
+.pull-left.w50[
+
+```r
+### spatial
+plot(xy, pch=19, col='grey')
+
+### species
+vegan::tabasco(spe, col=get_palette())
+
+### environment
+vegan::tabasco(env, col=get_palette())
+
+### traits
+*vegan::tabasco(tra, col=get_palette())
+
+### phylogeny
+plot(phy, cex=0.6, no.margin=TRUE)
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/plot-data-08-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Visualize data
+
+.pull-left.w50[
+
+```r
+### spatial
+plot(xy, pch=19, col='grey')
+
+### species
+vegan::tabasco(spe, col=get_palette())
+
+### environment
+vegan::tabasco(env, col=get_palette())
+
+### traits
+vegan::tabasco(tra, col=get_palette())
+
+### phylogeny
+*plot(phy, cex=0.6, no.margin=TRUE)
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/plot-data-10-1.svg)&lt;!-- --&gt;
+]
+
+---
+class: inverse middle center big-subsection
+
+# Diversity
+
+---
+
+# Diversity measures
+
+#### How do you define "diversity"?  
+
+
+```r
+### Gamma (regional) diversity
+(gamma &lt;- sum(colSums(spe) &gt; 0))
+```
+
+```
+## [1] 56
+```
+
+
+```r
+### Alpha (per-site) diversity
+alpha &lt;- rowSums(spe &gt; 0)  # within-site
+(avgalpha &lt;- mean(alpha))  # average within-site
+```
+
+```
+## [1] 6.268041
+```
+
+
+```r
+### Beta (among-site) diversity: Whittaker's
+(beta &lt;- gamma / avgalpha - 1)
+```
+
+```
+## [1] 7.934211
+```
+
+---
+
+# Diversity measures (&amp;#x3B2;-diversity)
+
+
+```r
+### 1 -- proportion of zeros in the matrix (independent of abundance)
+propzero &lt;- sum(spe &lt; .Machine$double.eps) / prod(dim(spe))
+cat('Proportion of zeros in matrix:', propzero, '\n')
+```
+
+```
+## Proportion of zeros in matrix: 0.8880707
+```
+
+
+```r
+### 2 -- "dust bunny index" of McCune and Root (2015) (uses abundances)
+dbi &lt;- 1 - mean(as.matrix(vegan::decostand(spe, method='max')))
+cat('Dust bunny index:', dbi, '\n')
+```
+
+```
+## Dust bunny index: 0.9202329
+```
+
+
+```r
+### 3 -- pairs of SUs that don't share species
+z &lt;- vegan::no.shared(spe)
+propnoshare &lt;- sum(z) / length(z)
+cat('', propnoshare, 'proportion of site-pairs share no species in common\n')
+```
+
+```
+##  0.441366 proportion of site-pairs share no species in common
+```
+
+---
+class: inverse middle center big-subsection
+
+# Dissimilarities
+
+---
+
+#    Dissimilarities
+
+.pull-left.w48[
+#### Species
+
+```r
+d &lt;- vegdist(spe, method='bray', binary=T)
+tabasco(as.matrix(d), col=get_palette())
+```
+
+![](index_files/figure-html/diss-01-1.svg)&lt;!-- --&gt;
+]
+
+.pull-right.w48[
+#### Environment
+
+```r
+E &lt;- vegdist(env, method='euc', binary=F)
+tabasco(as.matrix(E), col=get_palette())
+```
+
+![](index_files/figure-html/diss-03-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Loss of sensitivity problem
+
+.pull-left.w60[
+How dissimilar are SUs A and C? They share no species in common...
+
+```
+##     sp1 sp2 sp3 sp4 sp5
+## suA   1   1   0   0   0
+## suB   0   1   1   1   0
+## suC   0   0   0   1   1
+```
+]
+
+--
+
+.pull-left.w60[
+...Bray-Curtis will max out at 1.0...
+
+```
+##     suA suB
+## suB 0.6    
+## suC 1.0 0.6
+```
+]
+
+--
+
+.pull-left.w60[
+...but `stepacross()` replaces "too long" distances with shortest path.
+
+```
+##     suA suB
+## suB 0.6    
+## suC 1.2 0.6
+```
+]
+
+---
+
+# Stepacross adjustment
+
+&lt;img src="index_files/figure-html/double-zero-05-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Stepacross adjustment
+
+
+
+```r
+D &lt;- stepacross(d, 'shortest', toolong = 1)
+plot(d, D, xlab = 'Original', ylab = 'Stepacross')
+```
+
+&lt;img src="index_files/figure-html/diss-02-invisible-eval-1.svg" style="display: block; margin: auto;" /&gt;
+
+
+---
+class: inverse middle center big-subsection
+
+# Ordination
+
+---
+
+# Ordination: unconstrained
+
+### Three different algorithms
+
+```r
+m1 &lt;- metaMDS(D, k=2, maxit=250, try=100, trymax=101, trace=0) # NMS
+m2 &lt;- cmdscale(D, k=2, add=T)                                  # PCoA
+m3 &lt;- prcomp(spe)                                              # PCA
+```
+
+![](index_files/figure-html/ord-unconstrained-02-1.svg)&lt;!-- --&gt;
+
+---
+
+# dbRDA: the Swiss army knife 
+
+
+```r
+### dissimilarities
+D_euc  &lt;- vegdist(spe, 'euc')  # Euclidean
+D_chi  &lt;- vegdist(spe, 'chi')  # Chi-sq
+D_bc   &lt;- vegdist(spe, 'bray') # Bray-Curtis (Sorensen)
+
+### PCA: PCO based on Euclidean distances (see `stats::prcomp`)
+pca &lt;- dbrda(D_euc ~ 1)
+
+### CA/RA: PCO based on Chi-sq distances (see `vegan::cca`)
+ca  &lt;- dbrda(D_chi ~ 1)
+
+### PCO: generalizes to any dissimilarity (see `labdsv::pco`)
+pco &lt;- dbrda(D_bc  ~ 1)
+
+### RDA: constrained form of PCA (see `vegan::rda`)
+rda &lt;- dbrda(D_euc ~ k2o + mg, data = env)
+
+### CCA: constrained form of CA (see `vegan::cca`)
+cca &lt;- dbrda(D_chi ~ k2o + mg, data = env)
+
+### dbRDA: constrained form of PCO; can handle neg eigenvalues
+dbr &lt;- dbrda(D_bc  ~ k2o + mg, data = env, add = 'lingoes')
+```
+
+---
+
+# dbRDA: the Swiss army knife 
+
+.pull-left.w85[
+&lt;img src="index_files/figure-html/ord-swissarmy-02-1.svg" style="display: block; margin: auto;" /&gt;
+]
+
+.pull-right.w15[
+
+##### What are the points?  
+
+##### What is the ordination space? 
+
+##### What does distance between points mean?
+
+]
+
+---
+
+# Scaling scores
+
+Using `scores(x, scaling = ...)`:
+
+- `scaling = 1` &amp;mdash; focus on sites, scale site scores by `\(\lambda_i\)`
+- `scaling = 2` &amp;mdash; focus on species, scale species scores by `\(\lambda_i\)`
+- `scaling = 3` &amp;mdash; **symmetric scaling**, scale both scores by `\(\sqrt{\lambda_i}\)`
+- `scaling = -1` &amp;mdash; as above, but for `rda()` get correlation scores
+- `scaling = -2` &amp;mdash; for `cca()` multiply results by `\(\sqrt{(1/(1-\lambda_i))}\)`
+- `scaling = -3` &amp;mdash; this is Hill's scaling
+- `scaling &lt; 0` &amp;mdash; for `rda()` divide species scores by species' `\(\sigma\)`
+- `scaling = 0` &amp;mdash; raw scores
+
+...where `\(\lambda_i\)` is the *i*th eigenvalue.
+&lt;br&gt;&lt;/br&gt;
+###### Credit: Gavin Simpson
+
+---
+
+# NMS: a sensible default
+
+
+```r
+nms &lt;- vegan::metaMDS(D, k = 2, maxit = 500, try = 500, trymax = 501)
+plot(nms) # barebones -- what would you do to interpret this?
+stressplot(nms)
+```
+
+&lt;img src="index_files/figure-html/ord-nms-hide-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+class: inverse middle center big-subsection
+
+# Group clustering
+
+---
+
+# Group clustering
+
+### Hierarchical: Ward's clustering
+
+
+```r
+k   &lt;- 7                                          # specify number of groups
+cl  &lt;- hclust(D, method='ward.D2')                # clustering solution
+grp &lt;- cutree(cl, k)                              # group memberships
+plot(cl) ; rect.hclust(cl, k, border=rainbow(k))  # plot the dendrogram
+```
+
+&lt;img src="index_files/figure-html/cluster-01-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Group clustering
+
+### Non-hierarchical: fuzzy clustering
+
+
+```r
+install.packages(vegclust)
+require(vegclust)
+k     &lt;- 7                                         # specify number of groups
+cl    &lt;- vegclust::vegclustdist(D, mobileMemb=k)   # clustering solution
+grp_f &lt;- cl$memb                                   # fuzzy membership
+grp_c &lt;- vegclust::defuzzify(cl, 'cut', alpha=0.8) # crisp membership
+```
+
+---
+class: inverse middle center big-subsection
+
+# Group differences
+
+---
+
+#    Group differences
+
+#### First, define and visualize groups (arbitrary example)
+
+
+```r
+plot(m1$points, pch=NA, asp=1)                      # visualize on NMS
+text(m1$points, labels=grp, col=as.numeric(grp))    # group memberships
+ordispider(m1, groups=grp, col=1:k)                 # group centroids
+```
+
+&lt;img src="index_files/figure-html/permanova-grp-plot-1.svg" style="display: block; margin: auto;" /&gt;
+---
+
+#    Group differences
+
+#### PERMANOVA: test for differences in multivariate *centroid*
+
+
+```r
+adonis2(D ~ grp, permu=99)
+```
+
+```
+## Permutation test for adonis under reduced model
+## Terms added sequentially (first to last)
+## Permutation: free
+## Number of permutations: 99
+## 
+## adonis2(formula = D ~ grp, permutations = 99)
+##          Df SumOfSqs      R2      F Pr(&gt;F)   
+## grp       1    9.510 0.20354 24.278   0.01 **
+## Residual 95   37.214 0.79646                 
+## Total    96   46.724 1.00000                 
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+```
+
+--
+
+#### Recall how we defined the groups in `grp`; are you comfortable with this hypothesis test?
+
+---
+
+#    Group differences
+
+#### PERMDISP: test for differences in multivariate *dispersion*
+
+
+```r
+permutest(betadisper(D, grp), pairwise=TRUE, permu=99)
+```
+
+
+```
+##           Df    Sum Sq    Mean Sq        F N.Perm Pr(&gt;F)
+## Groups     6 0.4708883 0.07848139 4.364745     99   0.01
+## Residuals 90 1.6182676 0.01798075       NA     NA     NA
+```
+
+```
+## Permuted p-values:
+```
+
+```
+##  1-2  1-3  1-4  1-5  1-6  1-7  2-3  2-4  2-5  2-6  2-7  3-4  3-5  3-6  3-7  4-5 
+## 0.61 0.05 0.02 0.02 0.03 0.26 0.59 0.14 0.05 0.34 0.38 0.01 0.01 0.30 0.03 0.37 
+##  4-6  4-7  5-6  5-7  6-7 
+## 0.03 0.50 0.01 0.17 0.06
+```
+
+---
+
+# PERMANOVA extensions
+
+#### Can use categorical and/or continuous predictors
+
+
+```r
+adonis2(D ~ grp + elevation + clay + silt + conductivity, permu=99)
+```
+
+#### Blocked design: permutations must occur *within* strata
+
+
+```r
+blk &lt;- factor(letters[sample(rep(1:12,len=nrow(env)))]) # arbitrary 'blocks'
+pm  &lt;- how(nperm=999)             # setup permutation object
+setBlocks(pm) &lt;- blk              # permute only *within* blocks
+adonis2(D ~ grp, permu=pm)        # correct test
+```
+
+---
+class: inverse middle center big-subsection
+
+# Group indicator species
+
+---
+
+# Group indicator species
+
+#### Real groups
+
+
+```r
+iv  &lt;- labdsv::indval(spe, grp) # indicator species analysis for *real* groups
+summary(iv)                     # IndVal observed
+```
+
+
+```
+##                            cluster indicator_value probability
+## halimione_portulacoides          1          0.1854       0.047
+## atriplex_prostrata               1          0.2731       0.009
+## carlina_racemosa                 1          0.4144       0.002
+## centaurium_spicatum              1          0.4172       0.002
+## scilla_autumnalis                1          0.5288       0.001
+## hordeum_marinum                  1          0.6991       0.001
+## lolium_rigidum                   1          0.7014       0.001
+## alisma_plantago_aquatica         2          0.3194       0.020
+## schoenoplectus_litoralis         2          0.7283       0.001
+## aeluropus_littoralis             3          0.3929       0.008
+## bolboschoenus_maritimus          3          0.5295       0.001
+## phalaris_coerulescens            4          0.2832       0.037
+## beta_vulgaris                    4          0.4280       0.005
+## carlina_lanata                   5          0.2305       0.035
+## plantago_coronopus               5          0.2854       0.009
+## trifolium_squamosum              5          0.2966       0.023
+## medicago_intertexta              5          0.3037       0.005
+## arthrocnemum_macrostachyum       5          0.3666       0.013
+## juncus_maritimus                 6          0.3400       0.005
+## sarcocornia_fruticosa            6          0.7541       0.001
+## damasonium_alisma                6          0.7925       0.001
+## rumex_bucephalophorus            7          0.2344       0.045
+## stachys_marrubiifolia            7          0.2819       0.013
+## convolvulus_tricolor             7          0.3333       0.012
+## picris_echioides                 7          0.4019       0.012
+## convolvulus_arvensis             7          0.4085       0.002
+## sonchus_oleraceus                7          0.4731       0.004
+## avena_fatua                      7          0.6111       0.001
+## borago_officinalis               7          0.6111       0.001
+## diplotaxis_erucoides             7          0.7222       0.001
+```
+
+---
+
+# Group indicator species
+
+#### Random groups
+
+
+```r
+rnd &lt;- sample(grp, length(grp), replace=T) # define random groups by bootstrapping
+ivr &lt;- labdsv::indval(spe, rnd) # indicator species analysis for *random* groups
+summary(ivr)                    # IndVal expected at random
+```
+
+
+```
+##                 cluster indicator_value probability
+## drimia_numidica       6          0.2903       0.008
+```
+
+--
+
+#### Null expectation, setting alpha = 0.05
+
+
+```r
+ceiling(ncol(spe) * 0.05)
+```
+
+```
+## [1] 3
+```
+
+---
+class: inverse middle center big-subsection
+
+# Community traits
+
+---
+
+# Community traits
+
+
+```r
+head(tra, 4)
+```
+
+```
+##                          anemogamous autogamous entomogamous annual biennial
+## arisarum_vulgare                   0          0            1      0        0
+## alisma_plantago_aquatica           0          0            1      0        0
+## damasonium_alisma                  0          0            1      1        1
+## asphodelus_aetivus                 0          0            1      0        0
+##                          perennial       lfp min_height max_height       bfp
+## arisarum_vulgare                 1 0.6444426  0.4114081  0.1879018 0.0000000
+## alisma_plantago_aquatica         1 0.4065980  0.4114081  0.4362945 0.6666667
+## damasonium_alisma                1 0.6444426  0.2342243  0.1099155 0.5555556
+## asphodelus_aetivus               1 0.5374933  1.0000000  0.5462100 0.2777778
+##                          spikiness hairy_leaves
+## arisarum_vulgare                 0            0
+## alisma_plantago_aquatica         0            0
+## damasonium_alisma                0            0
+## asphodelus_aetivus               0            0
+```
+
+---
+
+# Community traits
+
+.pull-left.w50[
+
+```r
+### Euclidean trait dissimilarity
+###   (traits already scaled 0-1)
+Dt  &lt;- dist(tra, method='euc') 
+
+### calculate trait SES of mean 
+###   pairwise distances in sites
+ses &lt;- picante::ses.mpd(spe, Dt, 
+         null.model='richness')
+
+### plot SES across a nutrient gradient
+u &lt;- ifelse(ses$mpd.obs.p &lt; 0.05,2,1)
+plot(ses$mpd.obs.z ~ env$k, 
+     ylab='Trait SES(MPD)', 
+     xlab='Soil potassium', col=u)
+abline(lm(ses$mpd.obs.z ~ env$k)) # regression
+abline(h=0, lty=2) # random-traits line
+text(0.9, 1, 'Divergent')
+text(0.9, -4, 'Convergent')
+```
+]
+.pull-right.w50[
+![](index_files/figure-html/traits-03-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Community weighted means
+
+.pull-left.w50[
+#### (Weighted) mean trait value per SU
+
+```r
+### function to make CWM matrix
+`makecwm` &lt;- function (spe, tra) {
+  spe &lt;- as.matrix(spe)
+  tra &lt;- as.matrix(tra)
+  `stdz` &lt;- function(x) {
+    (x - min(x, na.rm=TRUE)) / 
+        diff(range(x, na.rm=TRUE))
+  }
+  tra &lt;- apply(tra, MARGIN = 2, FUN = stdz)
+  awt &lt;- spe %*% tra # abund-weighted totals
+  awt / rowSums(spe, na.rm=TRUE) # CWM matrix
+}
+
+### make the CWM traits matrix
+cwm &lt;- data.frame(makecwm(spe, tra)) 
+
+### visualize
+tabasco(cwm, col=get_palette())      
+```
+]
+
+.pull-right.w50[
+![](index_files/figure-html/cwm-02-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Ordination of CWM traits
+
+.pull-left.w50[
+#### Admits nonlinear trait-enviro relationship
+
+```r
+### NMS based on abundance-weighted traits
+m &lt;- metaMDS(cwm, 'altGower', k=2, trace=0)
+
+### SUs sized relative to a leaf trait
+plot(m, cex=cwm$lfp)
+
+### overlay enviro variable
+o &lt;- ordisurf(m, env$k, col=2, add=T)
+```
+
+##### What are the points?  
+
+##### What is the ordination space?  
+
+##### What does distance between points indicate?
+
+]
+
+.pull-right.w50[
+![](index_files/figure-html/cwm-04-1.svg)&lt;!-- --&gt;
+]
+
+---
+
+# Fourth-corner analysis and RLQ
+
+### the RLQ method
+
+
+```r
+require(ade4)
+o_spe &lt;- dudi.coa(spe, F) # Correspondence Analysis
+o_env &lt;- dudi.hillsmith(env, F, row.w = o_spe$lw)
+o_tra &lt;- dudi.hillsmith(tra, F, row.w = o_spe$cw)
+r     &lt;- rlq(o_env, o_spe, o_tra, F)
+plot(r)
+summary(r)
+randtest(r)
+```
+
+---
+
+# Fourth-corner analysis and RLQ
+
+&lt;img src="index_files/figure-html/rlq-02-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Fourth-corner analysis and RLQ
+
+#### Trait correlations
+
+
+```r
+fourthcorner.rlq(r, type='Q.axes')
+```
+
+```
+## Fourth-corner Statistics
+## ------------------------
+## Permutation method  Comb. 2 and 4  ( 999  permutations)
+## 
+## Adjustment method for multiple comparisons:   holm 
+## call:  fourthcorner.rlq(xtest = r, typetest = "Q.axes") 
+## 
+## ---
+## 
+##                    Test Stat           Obs     Std.Obs     Alter Pvalue
+## 1   AxcR1 / anemogamous    r  0.3305888147  5.69292462 two-sided  0.001
+## 2   AxcR2 / anemogamous    r -0.0458582587 -0.77960338 two-sided  0.444
+## 3    AxcR1 / autogamous    r -0.2245440975 -2.08793024 two-sided   0.03
+## 4    AxcR2 / autogamous    r  0.0516421890  1.11307304 two-sided  0.259
+## 5  AxcR1 / entomogamous    r -0.3305888147 -5.69292462 two-sided  0.001
+## 6  AxcR2 / entomogamous    r  0.0458582587  0.77960338 two-sided  0.444
+## 7        AxcR1 / annual    r -0.2710550381 -2.52925916 two-sided  0.007
+## 8        AxcR2 / annual    r -0.0984989149 -1.67108085 two-sided  0.089
+## 9      AxcR1 / biennial    r -0.1276065206 -1.13982521 two-sided  0.261
+## 10     AxcR2 / biennial    r -0.0641373702 -1.67709458 two-sided  0.092
+## 11    AxcR1 / perennial    r  0.2705213859  2.48889593 two-sided  0.007
+## 12    AxcR2 / perennial    r  0.0340545959  0.52989683 two-sided   0.59
+## 13          AxcR1 / lfp    r  0.0737622617  1.75201478 two-sided  0.086
+## 14          AxcR2 / lfp    r  0.0756252046  1.26281835 two-sided  0.206
+## 15   AxcR1 / min_height    r -0.0002066631 -0.03086926 two-sided  0.976
+## 16   AxcR2 / min_height    r  0.1004326492  1.63046869 two-sided  0.109
+## 17   AxcR1 / max_height    r  0.0051630195  0.07343021 two-sided  0.951
+## 18   AxcR2 / max_height    r  0.0544587825  1.29079312 two-sided  0.201
+## 19          AxcR1 / bfp    r  0.2324526902  2.12347283 two-sided  0.026
+## 20          AxcR2 / bfp    r -0.0909484362 -1.50781687 two-sided  0.145
+## 21    AxcR1 / spikiness    r  0.1779342409  1.75271427 two-sided  0.081
+## 22    AxcR2 / spikiness    r  0.0636401007  1.40307023 two-sided  0.167
+## 23 AxcR1 / hairy_leaves    r -0.1842685566 -1.69495302 two-sided  0.091
+## 24 AxcR2 / hairy_leaves    r -0.0097666513 -0.20355949 two-sided  0.842
+##    Pvalue.adj  
+## 1       0.024 *
+## 2           1  
+## 3        0.57  
+## 4           1  
+## 5       0.024 *
+## 6           1  
+## 7       0.154  
+## 8           1  
+## 9           1  
+## 10          1  
+## 11      0.154  
+## 12          1  
+## 13          1  
+## 14          1  
+## 15          1  
+## 16          1  
+## 17          1  
+## 18          1  
+## 19       0.52  
+## 20          1  
+## 21          1  
+## 22          1  
+## 23          1  
+## 24          1  
+## 
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+```
+
+---
+
+# Fourth-corner analysis and RLQ
+
+#### Environment correlations
+
+
+```r
+fourthcorner.rlq(r, type='R.axes')
+```
+
+```
+## Fourth-corner Statistics
+## ------------------------
+## Permutation method  Comb. 2 and 4  ( 999  permutations)
+## 
+## Adjustment method for multiple comparisons:   holm 
+## call:  fourthcorner.rlq(xtest = r, typetest = "R.axes") 
+## 
+## ---
+## 
+##                    Test Stat          Obs     Std.Obs     Alter Pvalue
+## 1          clay / AxcQ1    r  0.158920982  2.44189264 two-sided  0.014
+## 2          silt / AxcQ1    r -0.061153914 -0.96433329 two-sided  0.326
+## 3          sand / AxcQ1    r -0.115820713 -1.79748542 two-sided  0.077
+## 4           k2o / AxcQ1    r  0.268313148  4.11998443 two-sided  0.001
+## 5            mg / AxcQ1    r  0.160253315  2.39412055 two-sided  0.014
+## 6       na_100g / AxcQ1    r  0.353355511  5.34613443 two-sided  0.001
+## 7             k / AxcQ1    r  0.449746890  6.69092568 two-sided  0.001
+## 8  conductivity / AxcQ1    r  0.316892896  4.83476275 two-sided  0.001
+## 9     retention / AxcQ1    r  0.118177718  1.72785058 two-sided  0.094
+## 10         na_l / AxcQ1    r  0.280641685  4.24166475 two-sided  0.001
+## 11    elevation / AxcQ1    r -0.262101010 -2.67217392 two-sided  0.002
+## 12         clay / AxcQ2    r  0.079573076  1.48111204 two-sided  0.145
+## 13         silt / AxcQ2    r -0.155231156 -2.92952837 two-sided  0.006
+## 14         sand / AxcQ2    r  0.037032254  0.71340595 two-sided  0.472
+## 15          k2o / AxcQ2    r  0.026201484  0.50296940 two-sided  0.602
+## 16           mg / AxcQ2    r -0.076592437 -1.55057344 two-sided  0.113
+## 17      na_100g / AxcQ2    r -0.032223166 -0.65956317 two-sided  0.522
+## 18            k / AxcQ2    r  0.108332685  0.91226907 two-sided  0.386
+## 19 conductivity / AxcQ2    r -0.059251811 -1.19077435 two-sided  0.245
+## 20    retention / AxcQ2    r -0.060635579 -1.20040885 two-sided  0.225
+## 21         na_l / AxcQ2    r -0.082406453 -1.67655037 two-sided  0.093
+## 22    elevation / AxcQ2    r  0.003330203  0.03305252 two-sided  0.968
+##    Pvalue.adj  
+## 1        0.21  
+## 2           1  
+## 3       0.924  
+## 4       0.022 *
+## 5        0.21  
+## 6       0.022 *
+## 7       0.022 *
+## 8       0.022 *
+## 9           1  
+## 10      0.022 *
+## 11      0.034 *
+## 12          1  
+## 13      0.096 .
+## 14          1  
+## 15          1  
+## 16          1  
+## 17          1  
+## 18          1  
+## 19          1  
+## 20          1  
+## 21          1  
+## 22          1  
+## 
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+```
+
+---
+
+class: inverse middle center big-subsection
+
+# Community phylogenetics
+
+---
+
+# Community phylogenetics: basic plotting
+
+
+```r
+par(mfrow=c(1,3), mar=c(0,0,0,0), oma=c(0,0,0,0))           # plotting parameters
+plot(phy, cex=0.75, no.margin=T)                            # basic plotting
+plot(phy, cex=0.75, tip.color=colvec(tra$lfp), no.margin=T) # color labels by traits
+plot(phy, cex=0.75, label.offset=48, no.margin=T)           # symbolize trait values at tips
+tiplabels(pch=21, bg = c(tra$annual),    adj=0)
+tiplabels(pch=21, bg = c(tra$biennial),  adj=15)
+tiplabels(pch=21, bg = c(tra$perennial), adj=30)
+```
+
+&lt;img src="index_files/figure-html/phyloplot-01-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Phylogenetic diversity - alpha
+
+.pull-left.w50[
+
+```r
+### phylogenetic distance matrix
+Dp  &lt;- cophenetic(phy) 
+
+### Faith's phylogenetic diversity:
+###  total branch length connecting
+###   all species per site
+fpd &lt;- pd(spe, phy)
+
+### mean pairwise distance
+mpd &lt;- ses.mpd(
+  spe, Dp, null.model='independentswap')
+
+### mean nearest taxon distance
+mnd &lt;- ses.mntd(
+  spe, Dp, null.model='independentswap')
+
+### bring all together
+phy_div &lt;- 
+  cbind(fpd, 
+        mpd  = mpd$mpd.obs.z, 
+        mntd = mnd$mntd.obs.z)
+```
+]
+
+.pull-right.w47[
+
+```
+##        PD SR         mpd        mntd
+## 1  767.32  6  0.92152467  1.08223033
+## 2  551.60  4  1.00127789  0.89956948
+## 3  364.80  3 -0.74186332 -0.52641802
+## 4  694.38  6 -0.23269719  0.08822563
+## 5  395.80  3 -0.26034867  0.33585163
+## 6  323.60  3 -1.03913225 -1.66716963
+## 7  485.76  4 -0.17221377 -0.18773460
+## 8  932.32  9  0.04080037  0.08182749
+## 9  476.80  4 -1.01997248 -0.09066436
+## 10 579.60  6 -1.65459527 -1.13524065
+## 11 879.94 10 -0.48729928 -1.97117056
+## 12 817.38  7 -0.09923170  0.53220249
+```
+]
+
+---
+
+# Phylogenetic diversity - beta
+
+
+```r
+### correlation between phylogenetic and taxonomic beta-diversity
+Dp &lt;- picante::phylosor(spe, phy) # phylogenetic distances
+protest(Dp, D)                    # procrustes correlation
+```
+
+```
+## 
+## Call:
+## protest(X = Dp, Y = D) 
+## 
+## Procrustes Sum of Squares (m12 squared):        0.2736 
+## Correlation in a symmetric Procrustes rotation: 0.8523 
+## Significance:  0.001 
+## 
+## Permutation: free
+## Number of permutations: 999
+```
+
+
+
+---
+
+# Phylogenetic signal
+
+
+```r
+sapply(tra, FUN=function(j){
+  names(j) &lt;- rownames(tra)
+  round(picante::phylosignal(j, ape::multi2di(phy)), 4)})
+```
+
+```
+##                       anemogamous autogamous entomogamous annual  biennial
+## K                     3.2136      0.3401     3.2136       0.3466  0.4564  
+## PIC.variance.obs      6e-04       0.0039     6e-04        0.0057  0.0016  
+## PIC.variance.rnd.mean 0.0066      0.0047     0.0066       0.0069  0.0026  
+## PIC.variance.P        0.001       0.251      0.001        0.148   0.158   
+## PIC.variance.Z        -5.3551     -0.6838    -5.316       -1.1289 -1.0962 
+##                       perennial lfp     min_height max_height bfp    spikiness
+## K                     0.3951    0.3512  0.3451     0.3043     0.4064 0.9436   
+## PIC.variance.obs      0.005     0.0014  9e-04      9e-04      9e-04  0.001    
+## PIC.variance.rnd.mean 0.0069    0.0017  0.0011     0.001      0.0012 0.0033   
+## PIC.variance.P        0.04      0.17    0.266      0.464      0.124  0.001    
+## PIC.variance.Z        -1.7276   -0.8997 -0.6953    -0.2408    -1.083 -2.6172  
+##                       hairy_leaves
+## K                     0.5273      
+## PIC.variance.obs      0.0024      
+## PIC.variance.rnd.mean 0.0044      
+## PIC.variance.P        0.007       
+## PIC.variance.Z        -2.3532
+```
+
+---
+class: inverse middle center big-subsection
+
+# Community spatial analysis
+
+---
+
+# Mantel test
+
+
+```r
+E &lt;- dist(xy)                              # spatial distance matrix
+vegan::mantel(D, E, method = 'spearman')   # spearman *rank* correlation
+```
+
+```
+## 
+## Mantel statistic based on Spearman's rank correlation rho 
+## 
+## Call:
+## vegan::mantel(xdis = D, ydis = E, method = "spearman") 
+## 
+## Mantel statistic r: 0.4093 
+##       Significance: 0.001 
+## 
+## Upper quantiles of permutations (null model):
+##    90%    95%  97.5%    99% 
+## 0.0257 0.0350 0.0426 0.0495 
+## Permutation: free
+## Number of permutations: 999
+```
+
+
+```r
+ecodist::mantel(D ~ E, mrank = T) # alternative with useful bootstrap CIs
+```
+
+---
+
+# Mantel correlogram
+
+
+```r
+plot(vegan::mantel.correlog(D, E, cutoff=F, r.type='spearman', nperm=99, mult='holm'))
+```
+
+&lt;img src="index_files/figure-html/mantel-04-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Multiple regression on distance matrices
+
+.pull-left[
+
+```r
+# species dissimilarities are related 
+#  to space (extremely weakly) and
+#   potassium (moderately)
+ecodist::MRM(
+  D 
+   ~ dist(xy) + dist(env$k))
+```
+
+```
+## $coef
+##                       D  pval
+## Int         0.627953130 1.000
+## dist(xy)    0.001755839 0.001
+## dist(env$k) 0.301671934 0.001
+## 
+## $r.squared
+##        R2      pval 
+## 0.1994291 0.0010000 
+## 
+## $F.test
+##        F   F.pval 
+## 579.5514   0.0010
+```
+]
+
+.pull-right[
+
+```r
+# abundance of cosmopolitan bulrush 
+#  is NOT related to space, but is 
+#   related to potassium (moderately)
+ecodist::MRM(
+  dist(spe$bolboschoenus) 
+   ~ dist(xy) + dist(env$k))
+```
+
+```
+## $coef
+##             dist(spe$bolboschoenus)  pval
+## Int                     0.201552720 1.000
+## dist(xy)                0.000223733 0.091
+## dist(env$k)             0.411223852 0.001
+## 
+## $r.squared
+##         R2       pval 
+## 0.06277826 0.00100000 
+## 
+## $F.test
+##        F   F.pval 
+## 155.8368   0.0010
+```
+]
+
+---
+
+class: inverse middle center big-subsection
+
+---
+
+class: inverse middle center big-subsection
+
+# Wrap up
+
+---
+
+# Acknowledgments
+
+### ESA Vegetation Section  
+
+Martin Dovciak  
+Carissa Brown  
+Morgan D. Frost  
+Anita Thompson  
+
+### Further details
+
+https://ecol.shinyapps.io/esa_tutorial/
+
+
+---
+
+class: inverse middle center big-subsection
+
+# More??
+
+---
+
+# PCNM
+
+PCNM: principle coordinates of neighbor matrices
+
+
+```r
+E   &lt;- dist(xy)            # euclidean distances between sites
+pc  &lt;- pcnm(E)             # principal coordinates of neighbor matrices
+```
+
+![](index_files/figure-html/pcnm-02-1.svg)&lt;!-- --&gt;
+
+---
+
+# PCNM
+
+
+```r
+rs &lt;- rowSums(spe) / sum(spe)      # sites weighted by abundances
+pc &lt;- pcnm(E, w=rs)                # *weighted* PCNMs
+vp &lt;- varpart(D, env, vegan::scores(pc))  # variation partitioning
+```
+
+&lt;img src="index_files/figure-html/pcnm-03b-1.svg" style="display: block; margin: auto;" /&gt;
+
+---
+
+# PCNM
+
+.pull-left[
+
+```r
+### broad and local structure
+pc_broad &lt;- vegan::scores(pc)[,1:10]
+pc_local &lt;- vegan::scores(pc)[,11:59]
+vp       &lt;- varpart(D, env, pc_broad, pc_local)
+```
+]
+
+.pull-right[
+&lt;img src="index_files/figure-html/pcnm-04b-1.svg" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+# PCNM
+
+.pull-left[
+
+```r
+### soil physical, soil chemistry, and spatial predictors
+vp &lt;- varpart(
+  D,                               # dissimilarities
+  ~ clay + sand + silt,            # soil fractions
+  ~ mg + k + conductivity + na_l,  # soil chemistry
+  vegan::scores(pc),               # spatial predictors
+  data = env)                      # environmental dataset
+```
+]
+
+.pull-right[
+&lt;img src="index_files/figure-html/pcnm-05b-1.svg" style="display: block; margin: auto;" /&gt;
+]
+
+---
+class: inverse middle center big-subsection
+
+# Conclusion
+
+---
+
+class: inverse middle center big-subsection
+
+---
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script src="../macros.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "github",
+"highlightLines": true,
+"countIncrementalSlides": false,
+"ratio": "16:9",
+"click": true
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
