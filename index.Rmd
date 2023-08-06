@@ -142,6 +142,15 @@ source("https://github.com/phytomosaic/esa2022/raw/main/R/utils_color.R")
 
 ---
 
+# Get the data
+
+```{r get-dataset-gh, eval=FALSE}
+u <- 'https://github.com/phytomosaic/esa2023/raw/main/data/veg.rda'
+u <- url(u)
+load(u)
+```
+
+---
 # Basic R syntax
 
 ```{r basic-syntax}
