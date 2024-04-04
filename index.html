@@ -45,47 +45,17 @@ class: inverse middle center big-subsection
 
 # Overview
 
-.pull-left[
-### You want to:
+1\. Introductions 
 
-- Count species or turnover
+2\. Basic syntax and structures
 
-- Visualize species patterns among SUs 
+3\. Usage and examples
 
-- Group SUs by species differences 
+---
 
-- Test species differences among SUs 
+class: inverse middle center big-subsection
 
-- Evaluate env-species 
-
-- Evaluate trait-env-species 
-
-- Evaluate phylogeny-trait-env-species 
-
-- Evaluate spatial-phylogeny-trait-env-species 
-]
-
---
-
-.pull-right[
-### You can use:
-
-- Diversity measures 
-
-- Ordination 
-
-- Clustering 
-
-- Hypothesis testing
-
-- Hypothesis testing, overlays
-
-- CWM, fourth corner 
-
-- Phylogenetic community methods 
-
-- Advanced community methods
-]
+# Introductions
 
 ---
 
@@ -131,6 +101,33 @@ load(u)
 ```
 
 ---
+
+# Everything in R is one of:
+
+1\. object 
+
+2\. function
+
+3\. environment
+
+--
+
+# Kinds of objects in R
+
+1\. NULL 
+
+2\. scalar 
+
+3\. vector 
+
+4\. matrix or array 
+
+5\. data.frame 
+
+6\. list 
+
+---
+
 # Basic R syntax
 
 
@@ -149,8 +146,66 @@ head(x)                                # peek at top few rows
 m[1,1]                                 # matrix row 1, column 1
 lst$the_name                           # list item by name (data.frame column)
 
-### replacing pesky values
-m[is.na(m)] &lt;- 777                     # assign value to any missing values
+```
+
+---
+
+# Types and classes
+
+
+```r
+### examples
+x1 &lt;- 1   
+x2 &lt;- 1.0 
+x3 &lt;- '1'
+x4 &lt;- as.factor(x3)
+x5 &lt;- TRUE
+x6 &lt;- x5 * 99
+
+### examine classes
+list(x1,x2,x3,x4,x5,x6)
+lapply(list(x1,x2,x3,x4,x5,x6), class)
+
+```
+
+---
+
+# Handling missing elements
+
+
+```r
+### create matrix object
+m &lt;- matrix(c(1:8,NA), nrow=3, ncol=3) # a 3x3 matrix
+
+### identify missings
+anyNA(m)
+is.na(m[1,1])
+is.na(m[2,2])
+is.na(m[3,3])
+is.na(m)
+
+### replacing missings
+m[is.na(m)] &lt;- 777        # assign one value to any missing values
+
+```
+
+---
+
+# Getting data into R
+
+Ideally, everything is "text"
+
+
+```r
+### read csv
+x &lt;- read.csv('/path/to/your/file.csv') 
+
+### load binary RDA from file
+load('/path/to/your/file.rda')
+
+### load binary data from package
+data('thedata')
+
 ```
 
 ---
@@ -807,9 +862,9 @@ permutest(betadisper(D, grp), pairwise=TRUE, permu=99)
 
 ```
 ##  1-2  1-3  1-4  1-5  1-6  1-7  2-3  2-4  2-5  2-6  2-7  3-4  3-5  3-6  3-7  4-5 
-## 0.56 0.07 0.05 0.01 0.03 0.31 0.49 0.19 0.04 0.37 0.34 0.01 0.01 0.42 0.02 0.42 
+## 0.62 0.06 0.04 0.02 0.04 0.30 0.45 0.19 0.07 0.46 0.37 0.01 0.01 0.47 0.02 0.43 
 ##  4-6  4-7  5-6  5-7  6-7 
-## 0.04 0.59 0.01 0.13 0.07
+## 0.05 0.43 0.02 0.16 0.10
 ```
 
 ---
